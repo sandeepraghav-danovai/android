@@ -1,7 +1,33 @@
 *.iml
 .gradle/
 /local.properties
-.idea/
+# Android Studio / IntelliJ project files.
+# Ignored by default, then the portable, shareable parts are re-included below so a
+# fresh clone opens as a Gradle Android project with a working Run button.
+# (Note: git has no trailing comments in .gitignore - a '#' mid-line is part of the
+# pattern, so every comment here must sit on its own line.)
+.idea/*
+# the "app" and instrumented-test Run configurations
+!.idea/runConfigurations/
+# marks the project root as a Git checkout
+!.idea/vcs.xml
+# project type (Android) + compiler output dir
+!.idea/misc.xml
+# Gradle linkage and test-runner setting
+!.idea/gradle.xml
+# tells Studio to use the Gradle project system
+!.idea/AndroidProjectSystem.xml
+# shared formatting rules / inspection profiles (created on first use)
+!.idea/codeStyles/
+!.idea/inspectionProfiles/
+#
+# Still ignored on purpose, because they are per-user or per-machine:
+#   .idea/workspace.xml   open tabs, window layout, run history, device selection
+#   .idea/caches/         local caches incl. deviceStreaming.xml
+#   .idea/migrations.xml  one-time migration bookkeeping for this machine
+#   .idea/markdown.xml    personal editor preference
+#   .gradle/              holds config.properties -> absolute local JDK path
+#   local.properties      holds sdk.dir -> absolute local SDK path
 .DS_Store
 /build
 /captures
