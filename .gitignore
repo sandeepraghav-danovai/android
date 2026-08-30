@@ -38,3 +38,6 @@ app/build/
 app/release/
 *.apk
 *.aab
+.gradle/
+gradle/wrapper/dists/
+build/

@@ -27,6 +27,18 @@ abstract class VaultDatabase : RoomDatabase() {
             }
 
         fun dbFile(context: Context) = context.getDatabasePath(FILE_NAME)
+
+        /**
+         * Closes and forgets the open database so its files can be deleted. Room keeps the
+         * file handles open, and on some filesystems deleting underneath a live connection
+         * leaves the -wal/-shm siblings behind, so this must run before a vault reset.
+         */
+        fun closeInstance() {
+            synchronized(this) {
+                instance?.close()
+                instance = null
+            }
+        }
     }
 }
 

@@ -28,7 +28,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
-private enum class KeyStep { ENTER_KEY, NEW_PASSWORD, DONE }
+enum class KeyStep { ENTER_KEY, NEW_PASSWORD, DONE }
 
 class RecoveryKeyUnlockViewModel(private val app: VaultApplication) : ViewModel() {
     data class UiState(

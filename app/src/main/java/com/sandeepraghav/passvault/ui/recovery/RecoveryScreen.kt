@@ -29,7 +29,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
-private enum class Step { INTRO, ENTER_CODES, NEW_PASSWORD, DONE }
+enum class Step { INTRO, ENTER_CODES, NEW_PASSWORD, DONE }
 
 class RecoveryViewModel(private val app: VaultApplication) : ViewModel() {
     data class UiState(

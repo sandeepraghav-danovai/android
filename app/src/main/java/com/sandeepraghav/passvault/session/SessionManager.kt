@@ -42,6 +42,14 @@ class SessionManager {
         _lockState.value = LockState.LOCKED
     }
 
+    /** Wipes the session and reports that no vault exists at all — used after a vault reset. */
+    fun resetToNoVault() {
+        CryptoManager.wipe(dek)
+        dek = null
+        autoLockJob?.cancel()
+        _lockState.value = LockState.NO_VAULT
+    }
+
     fun scheduleAutoLock(scope: CoroutineScope) {
         autoLockJob?.cancel()
         autoLockJob = scope.launch {
