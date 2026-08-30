@@ -35,8 +35,13 @@ fun PassVaultNavGraph() {
     }
 
     LaunchedEffect(lockState) {
-        if (lockState == LockState.LOCKED && navController.currentDestination?.route != Routes.LOCK) {
-            navController.navigate(Routes.LOCK) {
+        val target = when (lockState) {
+            LockState.LOCKED -> Routes.LOCK
+            LockState.NO_VAULT -> Routes.SETUP
+            LockState.UNLOCKED -> null
+        }
+        if (target != null && navController.currentDestination?.route != target) {
+            navController.navigate(target) {
                 popUpTo(0) { inclusive = true }
                 launchSingleTop = true
             }
@@ -97,7 +102,10 @@ fun PassVaultNavGraph() {
             SettingsScreen(
                 onBack = { navController.popBackStack() },
                 onLocked = { },
-                onRegenerateRecoveryKey = { navController.navigate(Routes.recoveryKeyRevealFromSettings()) }
+                onRegenerateRecoveryKey = { navController.navigate(Routes.recoveryKeyRevealFromSettings()) },
+                // resetVault flips the session to NO_VAULT, which the LaunchedEffect above
+                // routes to setup; this just closes the settings screen behind it.
+                onVaultReset = { navController.navigate(Routes.SETUP) { popUpTo(0) { inclusive = true } } }
             )
         }
 

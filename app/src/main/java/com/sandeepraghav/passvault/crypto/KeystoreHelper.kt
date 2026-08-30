@@ -38,6 +38,13 @@ object KeystoreHelper {
         return keyGenerator.generateKey()
     }
 
+    /** Drops the device-bound key. Only for a full vault reset — any blob it sealed becomes unreadable. */
+    fun deleteKey() {
+        runCatching {
+            KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }.deleteEntry(KEY_ALIAS)
+        }
+    }
+
     fun encrypt(plaintext: ByteArray): EncryptedBlob {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
