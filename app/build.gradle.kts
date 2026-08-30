@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
 }
 
@@ -46,6 +47,8 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "/META-INF/NOTICE.md"
+            excludes += "/META-INF/LICENSE.md"
         }
     }
 }
@@ -76,6 +79,9 @@ dependencies {
     implementation("com.sun.mail:android-activation:1.6.7")
 
     implementation("androidx.datastore:datastore-preferences:1.1.1")
+
+    // Fingerprint / face unlock (BiometricPrompt + CryptoObject)
+    implementation("androidx.biometric:biometric:1.1.0")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")

@@ -245,6 +245,84 @@ class VaultRepository(private val context: Context, val session: SessionManager)
         }
     }
 
+    // ---------------------------------------------------------------- biometric unlock
+
+    fun isBiometricEnabled(): Boolean = vaultExists() && VaultHeader.load(context).biometricEnabled
+
+    /** The IV the DEK was sealed with, needed to build the decrypt cipher before prompting. */
+    fun biometricIv(): ByteArray? {
+        val wrapped = VaultHeader.load(context).biometricWrappedDek ?: return null
+        return runCatching {
+            com.sandeepraghav.passvault.crypto.EncryptedBlob.fromStorageString(wrapped).iv
+        }.getOrNull()
+    }
+
+    /**
+     * Seals the in-memory DEK with a biometric-gated Keystore key. [cipher] must be the
+     * ENCRYPT-mode cipher that BiometricPrompt has just authenticated, and the vault must
+     * already be unlocked — enabling biometrics is never a way to obtain the DEK.
+     */
+    fun enableBiometricUnlock(cipher: javax.crypto.Cipher) {
+        val dek = session.currentKey() ?: throw IllegalStateException("Vault is locked")
+        val ciphertext = cipher.doFinal(dek)
+        val blob = com.sandeepraghav.passvault.crypto.EncryptedBlob(cipher.iv, ciphertext).toStorageString()
+        val header = VaultHeader.load(context)
+        VaultHeader.save(context, header.copy(biometricEnabled = true, biometricWrappedDek = blob))
+    }
+
+    fun disableBiometricUnlock() {
+        com.sandeepraghav.passvault.crypto.BiometricKeystore.deleteKey()
+        val header = VaultHeader.load(context)
+        VaultHeader.save(context, header.copy(biometricEnabled = false, biometricWrappedDek = null))
+    }
+
+    /**
+     * Unwraps the DEK with an already-authenticated DECRYPT cipher and starts a session.
+     * The canary is still checked, so a blob that somehow does not belong to this vault is
+     * rejected rather than producing a garbage key.
+     */
+    suspend fun unlockWithBiometric(cipher: javax.crypto.Cipher): Boolean {
+        val header = VaultHeader.load(context)
+        val wrapped = header.biometricWrappedDek ?: return false
+        return try {
+            val blob = com.sandeepraghav.passvault.crypto.EncryptedBlob.fromStorageString(wrapped)
+            val dek = cipher.doFinal(blob.ciphertext)
+            val canaryOk = CryptoManager.decrypt(dek, com.sandeepraghav.passvault.crypto.EncryptedBlob.fromStorageString(header.canary))
+                .contentEquals(canaryPlaintext)
+            if (canaryOk) {
+                session.unlock(dek)
+                true
+            } else {
+                CryptoManager.wipe(dek)
+                false
+            }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    // ---------------------------------------------------------------- destructive reset
+
+    /**
+     * Deletes the vault outright: both files, every escrowed copy of the DEK, and the
+     * device-bound Keystore material behind them. There is no undo and no recovery path
+     * afterwards — every stored password is gone, and any previously exported backup stays
+     * encrypted under the old master password, so this does not make those readable either.
+     */
+    suspend fun resetVault() {
+        session.lock()
+        VaultDatabase.closeInstance()
+
+        // deleteDatabase also removes the -wal and -shm siblings
+        context.deleteDatabase(VaultDatabase.FILE_NAME)
+        VaultHeader.file(context).delete()
+
+        com.sandeepraghav.passvault.crypto.BiometricKeystore.deleteKey()
+        com.sandeepraghav.passvault.crypto.KeystoreHelper.deleteKey()
+
+        session.resetToNoVault()
+    }
+
     suspend fun addCategory(name: String, icon: String, colorHex: String) {
         val count = categoryDao.count()
         categoryDao.insert(CategoryEntity(name = name, icon = icon, colorHex = colorHex, sortOrder = count, isBuiltIn = false))

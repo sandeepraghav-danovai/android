@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.sandeepraghav.passvault.VaultApplication
+import com.sandeepraghav.passvault.ui.components.DanovAiLockup
 import com.sandeepraghav.passvault.ui.components.LockGlyph
 import com.sandeepraghav.passvault.ui.components.PasswordOutlinedField
 import com.sandeepraghav.passvault.ui.vaultViewModel
@@ -77,6 +78,8 @@ fun SetupScreen(onVaultCreated: () -> Unit) {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        DanovAiLockup(width = 168.dp)
+        Spacer(Modifier.height(20.dp))
         LockGlyph()
         Spacer(Modifier.height(16.dp))
         Text("Create your master password", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)

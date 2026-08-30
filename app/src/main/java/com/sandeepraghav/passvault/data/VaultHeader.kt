@@ -32,7 +32,14 @@ data class VaultHeader(
      * VaultRepository.vaultFilesForBackup).
      */
     val recoveryKitEnabled: Boolean = false,
-    val recoveryKitWrappedDek: String? = null
+    val recoveryKitWrappedDek: String? = null,
+    /**
+     * The DEK wrapped by a biometric-gated Android Keystore key (see BiometricKeystore).
+     * Device-bound and destroyed if biometrics are re-enrolled, so it is strictly a
+     * convenience on top of the master password, never a replacement for it.
+     */
+    val biometricEnabled: Boolean = false,
+    val biometricWrappedDek: String? = null
 ) {
     fun toJson(): String {
         val obj = JSONObject()
@@ -54,6 +61,8 @@ data class VaultHeader(
         obj.put("smtpConfigEncrypted", smtpConfigEncrypted)
         obj.put("recoveryKitEnabled", recoveryKitEnabled)
         obj.put("recoveryKitWrappedDek", recoveryKitWrappedDek)
+        obj.put("biometricEnabled", biometricEnabled)
+        obj.put("biometricWrappedDek", biometricWrappedDek)
         return obj.toString()
     }
 
@@ -84,7 +93,9 @@ data class VaultHeader(
                 recoveryEmail = obj.optString("recoveryEmail", null),
                 smtpConfigEncrypted = obj.optString("smtpConfigEncrypted", null),
                 recoveryKitEnabled = obj.optBoolean("recoveryKitEnabled", false),
-                recoveryKitWrappedDek = obj.optString("recoveryKitWrappedDek", null)
+                recoveryKitWrappedDek = obj.optString("recoveryKitWrappedDek", null),
+                biometricEnabled = obj.optBoolean("biometricEnabled", false),
+                biometricWrappedDek = obj.optString("biometricWrappedDek", null)
             )
         }
 

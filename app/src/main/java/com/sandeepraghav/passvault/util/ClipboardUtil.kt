@@ -5,7 +5,7 @@ import android.content.ClipDescription
 import android.content.Context
 import android.content.ClipboardManager
 import android.os.Build
-import android.os.Bundle
+import android.os.PersistableBundle
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -19,7 +19,7 @@ object ClipboardUtil {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val clip = ClipData.newPlainText(label, text)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            clip.description.extras = Bundle().apply {
+            clip.description.extras = PersistableBundle().apply {
                 putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
             }
         }

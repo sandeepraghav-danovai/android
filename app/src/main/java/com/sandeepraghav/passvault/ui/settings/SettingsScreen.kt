@@ -38,7 +38,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.Alignment
+import com.sandeepraghav.passvault.ui.components.BiometricAuth
+import androidx.compose.ui.res.stringResource
 import androidx.core.content.FileProvider
+import com.sandeepraghav.passvault.R
+import com.sandeepraghav.passvault.ui.components.DanovAiLockup
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.sandeepraghav.passvault.VaultApplication
@@ -54,6 +61,9 @@ class SettingsViewModel(private val app: VaultApplication) : ViewModel() {
     data class UiState(
         val recoveryEnabled: Boolean = false,
         val recoveryKitEnabled: Boolean = false,
+        val biometricEnabled: Boolean = false,
+        val resetConfirmText: String = "",
+        val showResetDialog: Boolean = false,
         val newPassword: String = "",
         val confirmPassword: String = "",
         val message: String? = null,
@@ -66,7 +76,11 @@ class SettingsViewModel(private val app: VaultApplication) : ViewModel() {
     )
 
     private val _state = MutableStateFlow(
-        UiState(recoveryEnabled = loadRecoveryEnabled(), recoveryKitEnabled = app.repository.isRecoveryKitEnabled())
+        UiState(
+            recoveryEnabled = loadRecoveryEnabled(),
+            recoveryKitEnabled = app.repository.isRecoveryKitEnabled(),
+            biometricEnabled = app.repository.isBiometricEnabled()
+        )
     )
     val state: StateFlow<UiState> = _state
 
@@ -117,7 +131,45 @@ class SettingsViewModel(private val app: VaultApplication) : ViewModel() {
         update { it.copy(recoveryEnabled = false, message = "Recovery disabled.") }
     }
 
+    // ------------------------------------------------------------ biometric unlock
+
+    fun onBiometricEnabled(cipher: javax.crypto.Cipher) {
+        runCatching { app.repository.enableBiometricUnlock(cipher) }
+            .onSuccess { update { it.copy(biometricEnabled = true, message = "Biometric unlock enabled.") } }
+            .onFailure { error -> update { it.copy(message = "Couldn't enable biometric unlock: ${error.message}") } }
+    }
+
+    fun disableBiometric() {
+        app.repository.disableBiometricUnlock()
+        update { it.copy(biometricEnabled = false, message = "Biometric unlock disabled.") }
+    }
+
+    fun showMessage(message: String) = update { it.copy(message = message) }
+
+    // ------------------------------------------------------------ destructive reset
+
+    fun openResetDialog() = update { it.copy(showResetDialog = true, resetConfirmText = "") }
+    fun dismissResetDialog() = update { it.copy(showResetDialog = false, resetConfirmText = "") }
+    fun onResetConfirmTextChange(value: String) = update { it.copy(resetConfirmText = value) }
+
+    /** Only fires on an exact match, so the gesture can't be completed by accident. */
+    fun confirmReset(onReset: () -> Unit) {
+        if (_state.value.resetConfirmText.trim() != RESET_CONFIRM_PHRASE) {
+            update { it.copy(message = "Type $RESET_CONFIRM_PHRASE exactly to confirm.") }
+            return
+        }
+        viewModelScope.launch {
+            app.repository.resetVault()
+            update { it.copy(showResetDialog = false, resetConfirmText = "") }
+            onReset()
+        }
+    }
+
     fun lockNow() = app.sessionManager.lock()
+
+    companion object {
+        const val RESET_CONFIRM_PHRASE = "DELETE"
+    }
 
     fun exportBackup(context: android.content.Context) {
         viewModelScope.launch {
@@ -129,7 +181,12 @@ class SettingsViewModel(private val app: VaultApplication) : ViewModel() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onLocked: () -> Unit, onRegenerateRecoveryKey: () -> Unit) {
+fun SettingsScreen(
+    onBack: () -> Unit,
+    onLocked: () -> Unit,
+    onRegenerateRecoveryKey: () -> Unit,
+    onVaultReset: () -> Unit
+) {
     val viewModel = vaultViewModel { SettingsViewModel(it) }
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
@@ -301,6 +358,65 @@ fun SettingsScreen(onBack: () -> Unit, onLocked: () -> Unit, onRegenerateRecover
             Divider()
             Spacer(Modifier.height(24.dp))
 
+            // ---------------------------------------------------------------- biometric unlock
+            val activity = context as? androidx.fragment.app.FragmentActivity
+            val biometricStatus = BiometricAuth.availability(context)
+
+            Text("Biometric unlock", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                when (biometricStatus) {
+                    is BiometricAuth.Availability.Ready ->
+                        "Unlock with your fingerprint or face instead of typing the master password. " +
+                            "Your master password still works, and is still required after a restart or " +
+                            "if you enrol a new fingerprint."
+                    is BiometricAuth.Availability.NotEnrolled ->
+                        "No fingerprint or face is enrolled on this device yet. Add one in Android Settings first."
+                    is BiometricAuth.Availability.NoHardware ->
+                        "This device has no usable biometric hardware."
+                    is BiometricAuth.Availability.Unavailable -> biometricStatus.reason
+                },
+                style = MaterialTheme.typography.bodySmall
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Use biometric unlock", style = MaterialTheme.typography.bodyMedium)
+                Switch(
+                    checked = state.biometricEnabled,
+                    enabled = biometricStatus is BiometricAuth.Availability.Ready && activity != null,
+                    onCheckedChange = { wantEnabled ->
+                        if (!wantEnabled) {
+                            viewModel.disableBiometric()
+                        } else if (activity == null) {
+                            viewModel.showMessage("Biometric unlock isn't available here.")
+                        } else {
+                            try {
+                                val cipher = com.sandeepraghav.passvault.crypto.BiometricKeystore.encryptCipher()
+                                BiometricAuth.authenticate(
+                                    activity = activity,
+                                    cipher = cipher,
+                                    title = "Enable biometric unlock",
+                                    subtitle = "Confirm it's you to link this vault to your biometrics",
+                                    negativeLabel = "Cancel",
+                                    onSuccess = { authenticated -> viewModel.onBiometricEnabled(authenticated) },
+                                    onFailed = { message -> message?.let(viewModel::showMessage) }
+                                )
+                            } catch (e: Exception) {
+                                viewModel.showMessage("Couldn't set up biometric unlock on this device.")
+                            }
+                        }
+                    }
+                )
+            }
+
+            Spacer(Modifier.height(24.dp))
+            Divider()
+            Spacer(Modifier.height(24.dp))
+
             OutlinedButton(
                 onClick = { viewModel.lockNow(); onLocked() },
                 modifier = Modifier.fillMaxWidth()
@@ -308,9 +424,100 @@ fun SettingsScreen(onBack: () -> Unit, onLocked: () -> Unit, onRegenerateRecover
                 Text("Lock now")
             }
 
+            // ---------------------------------------------------------------- danger zone
+            Spacer(Modifier.height(24.dp))
+            Divider()
+            Spacer(Modifier.height(24.dp))
+
+            Text(
+                "Reset vault",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.error
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Deletes the vault and every password in it, then starts over from a new master " +
+                    "password. Use this if you've forgotten your master password and have no recovery " +
+                    "key — there is no way to get the existing entries back, and old exported backups " +
+                    "stay locked to the old password.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = viewModel::openResetDialog,
+                modifier = Modifier.fillMaxWidth(),
+                colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error
+                )
+            ) {
+                Text("Delete vault and start over")
+            }
+
+            if (state.showResetDialog) {
+                AlertDialog(
+                    onDismissRequest = viewModel::dismissResetDialog,
+                    title = { Text("Delete this vault?") },
+                    text = {
+                        Column {
+                            Text(
+                                "This erases the vault file, the database, and every escrowed copy of " +
+                                    "the key — including biometric unlock and any recovery key. It cannot " +
+                                    "be undone.",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            Text(
+                                "Type ${SettingsViewModel.RESET_CONFIRM_PHRASE} to confirm:",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = state.resetConfirmText,
+                                onValueChange = viewModel::onResetConfirmTextChange,
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = { viewModel.confirmReset(onVaultReset) },
+                            enabled = state.resetConfirmText.trim() == SettingsViewModel.RESET_CONFIRM_PHRASE
+                        ) {
+                            Text("Delete vault", color = MaterialTheme.colorScheme.error)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = viewModel::dismissResetDialog) { Text("Cancel") }
+                    }
+                )
+            }
+
             state.message?.let {
                 Spacer(Modifier.height(16.dp))
                 Text(it, style = MaterialTheme.typography.bodySmall)
+            }
+
+            Spacer(Modifier.height(32.dp))
+            Divider()
+            Spacer(Modifier.height(24.dp))
+
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                DanovAiLockup(width = 180.dp)
+                Spacer(Modifier.height(12.dp))
+                val versionName = remember {
+                    runCatching {
+                        context.packageManager.getPackageInfo(context.packageName, 0).versionName
+                    }.getOrNull()
+                }
+                Text(
+                    stringResource(R.string.app_name) + (versionName?.let { " · $it" } ?: ""),
+                    style = MaterialTheme.typography.labelMedium
+                )
+                Spacer(Modifier.height(16.dp))
             }
         }
     }
