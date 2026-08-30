@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">PassVault</string>
+
+    <!-- DanovAI company branding -->
+    <string name="company_name">DanovAI</string>
+    <string name="company_tagline">The Enterprise AI Platform</string>
+    <string name="company_byline">by DanovAI</string>
+    <string name="company_logo_description">DanovAI — The Enterprise AI Platform</string>
 </resources>

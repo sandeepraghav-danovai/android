@@ -77,6 +77,9 @@ scripts/
 tools/emulator/
   samsung_galaxy_s25-device.xml   S25 hardware profile (device schema v8 — see note below)
   skins/samsung_galaxy_s25/       Device-frame art + layout for the emulator window
+
+tools/branding/
+  generate_assets.py              Rebuilds every icon/logo resource from danovAI.png
 ```
 
 ## Prerequisites
@@ -230,6 +233,43 @@ If you ever hand-edit `tools/emulator/samsung_galaxy_s25-device.xml`, keep its X
 Android Studio understands up to v10, and — the nasty part — `avdmanager` does not report a schema
 it dislikes as an error. It *silently renames* the file to `devices.xml.old` and carries on, so the
 profile simply appears to vanish. Schema 8 is the version both tools accept.
+
+## Branding
+
+The app is PassVault, published under the **DanovAI** brand. `danovAI.png` in the project root is
+the master artwork — a landscape lockup (D mark + wordmark + tagline) drawn on white. Every image
+resource in the app is derived from it, so that file is the only thing to replace if the logo
+changes:
+
+```bash
+python3 tools/branding/generate_assets.py        # needs pillow + numpy
+```
+
+That regenerates 23 PNGs under `app/src/main/res/`. What it produces and why:
+
+| Resource | Purpose |
+|---|---|
+| `mipmap-*/ic_launcher_foreground.png` | The **D mark alone** on the 108dp adaptive canvas |
+| `mipmap-*/ic_launcher_monochrome.png` | Silhouette for Android 13+ themed icons |
+| `mipmap-*/ic_launcher{,_round}.png` | Legacy 48dp rasters for anything wanting a non-adaptive icon |
+| `drawable-nodpi/danov_ai_lockup.png` | Full lockup, light theme (Setup header, Settings About) |
+| `drawable-night-nodpi/danov_ai_lockup.png` | Same lockup with the near-black type lightened for dark theme |
+| `drawable-nodpi/danov_ai_mark.png` | Small D mark for the "by DanovAI" byline |
+
+Three decisions worth knowing, because they are easy to get wrong:
+
+- **The launcher icon is the D mark only, never the full lockup.** A landscape lockup with a
+  wordmark and tagline is illegible at 48dp and would be cropped by the launcher's mask anyway.
+- **The mark is scaled from its measured content radius**, not a guessed percentage. A launcher may
+  mask the 108dp canvas down to a 66dp circle; the script measures how far the furthest opaque
+  pixel sits from centre and sizes the mark so nothing can clip (currently 52.8dp).
+- **The PNGs are truecolour on purpose.** Palette-quantising them cuts the lockup from 310 KB to
+  122 KB, but it visibly bands the blue/purple gradient, so it isn't worth it. Total brand art is
+  about 640 KB of the ~21 MB debug APK.
+
+The white background of the master file is lifted into real alpha (un-premultiplying the
+antialiased edges), so the artwork sits cleanly on any surface with no white fringing — which is
+what makes the single lockup usable on both the light and dark app themes.
 
 ## Building a signed release APK (optional, for a permanent install)
 

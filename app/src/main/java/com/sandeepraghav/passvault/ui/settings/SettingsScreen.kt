@@ -38,7 +38,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.res.stringResource
 import androidx.core.content.FileProvider
+import com.sandeepraghav.passvault.R
+import com.sandeepraghav.passvault.ui.components.DanovAiLockup
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.sandeepraghav.passvault.VaultApplication
@@ -311,6 +315,28 @@ fun SettingsScreen(onBack: () -> Unit, onLocked: () -> Unit, onRegenerateRecover
             state.message?.let {
                 Spacer(Modifier.height(16.dp))
                 Text(it, style = MaterialTheme.typography.bodySmall)
+            }
+
+            Spacer(Modifier.height(32.dp))
+            Divider()
+            Spacer(Modifier.height(24.dp))
+
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                DanovAiLockup(width = 180.dp)
+                Spacer(Modifier.height(12.dp))
+                val versionName = remember {
+                    runCatching {
+                        context.packageManager.getPackageInfo(context.packageName, 0).versionName
+                    }.getOrNull()
+                }
+                Text(
+                    stringResource(R.string.app_name) + (versionName?.let { " · $it" } ?: ""),
+                    style = MaterialTheme.typography.labelMedium
+                )
+                Spacer(Modifier.height(16.dp))
             }
         }
     }

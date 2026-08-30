@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.sandeepraghav.passvault.VaultApplication
+import com.sandeepraghav.passvault.ui.components.DanovAiByline
 import com.sandeepraghav.passvault.ui.components.LockGlyph
 import com.sandeepraghav.passvault.ui.components.PasswordOutlinedField
 import com.sandeepraghav.passvault.ui.vaultViewModel
@@ -63,6 +64,8 @@ fun LockScreen(onUnlocked: () -> Unit, onForgotPassword: () -> Unit, onUseRecove
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        DanovAiByline()
+        Spacer(Modifier.height(20.dp))
         LockGlyph()
         Spacer(Modifier.height(16.dp))
         Text("PassVault is locked", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
