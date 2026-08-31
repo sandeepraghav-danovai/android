@@ -16,11 +16,11 @@ val keystoreProperties = Properties().apply {
 }
 
 android {
-    namespace = "com.sandeepraghav.passvault"
+    namespace = "com.danovai.passvault"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.sandeepraghav.passvault"
+        applicationId = "com.danovai.passvault"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

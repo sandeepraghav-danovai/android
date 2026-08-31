@@ -19,7 +19,7 @@ below): daily sync of the encrypted vault file to Google Drive.
   from "corrupt vault" without ever comparing plaintext passwords.
 
 **Storage**: two files make up a vault —
-[`vault_header.json`](app/src/main/java/com/sandeepraghav/passvault/data/VaultHeader.kt) (salts,
+[`vault_header.json`](app/src/main/java/com/danovai/passvault/data/VaultHeader.kt) (salts,
 wrapped keys, recovery config) and `passvault.db` (Room/SQLite — category/title/username in the
 clear for list/search UX, `password`/`notes` columns store ciphertext only). Both live in the
 app's private storage (`allowBackup="false"` — Android's own cloud backup is disabled; the *only*
@@ -39,14 +39,14 @@ stays valid).
   Requesting recovery sends one 8-character code via SMS to your registered phone and another via
   email (SMTP, using an app password you provide); entering both correctly is an **app-level
   gate** before the RecoveryKey is ever touched — see the doc comment in
-  [`RecoveryManager.kt`](app/src/main/java/com/sandeepraghav/passvault/recovery/RecoveryManager.kt)
+  [`RecoveryManager.kt`](app/src/main/java/com/danovai/passvault/recovery/RecoveryManager.kt)
   for the honest threat-model caveat (it protects against someone else trying to reset your
   vault, not against a fully compromised, already-unlocked device). It's also device-bound: it
   only works on this phone.
 
 - **One-time recovery key**: generated on demand in Settings, shown to you exactly once, and
   never stored anywhere on the device — only the DEK wrapped by its raw bytes is
-  ([`VaultHeader.recoveryKitWrappedDek`](app/src/main/java/com/sandeepraghav/passvault/data/VaultHeader.kt)).
+  ([`VaultHeader.recoveryKitWrappedDek`](app/src/main/java/com/danovai/passvault/data/VaultHeader.kt)).
   Save it somewhere durable (password manager, printed copy). Because the app never holds the
   actual key, this one has no device-binding and no "gate" to bypass — whoever has the key and a
   copy of the vault files (e.g. from a Drive backup) can recover, on any device, with nothing
@@ -74,7 +74,7 @@ from another vault cannot satisfy it (`VaultRepository.verifyBiometric`).
 ## Project structure
 
 ```
-app/src/main/java/com/sandeepraghav/passvault/
+app/src/main/java/com/danovai/passvault/
   crypto/        Argon2id KDF, AES-GCM, Android Keystore wrapper
   data/          Room entities/DAOs, the vault header file
   session/       In-memory unlock state + auto-lock
@@ -284,6 +284,54 @@ The white background of the master file is lifted into real alpha (un-premultipl
 antialiased edges), so the artwork sits cleanly on any surface with no white fringing — which is
 what makes the single lockup usable on both the light and dark app themes.
 
+## Notes
+
+Unlocking now lands on a chooser: **Secrets** (the password vault, unchanged) or **Notes**.
+
+Both sit behind the same single unlock — there is no second passphrase. The difference is what
+happens afterwards: a stored password still asks you to confirm before it will reveal or copy
+itself, while a note just opens. That is the intended split. Notes are a notebook you flip
+through once you are in; passwords stay individually gated.
+
+- **Write** text notes. Leave the title blank and the first line becomes the title, trimmed to 60
+  characters — a note jotted down in a hurry still has something recognisable in the list.
+- **Images** can be attached from the gallery or pasted from the clipboard, and render inline.
+- **Tap a note** to open it in a popup over the list, showing tags, body, images, and when it was
+  created and last edited.
+- **Tags** are created by typing them on a note. The list filters by tag chips, and a tag that no
+  note references any more is pruned so the filter row stays meaningful.
+- **Search** matches note titles *and* bodies.
+
+### How notes are stored
+
+Note titles and bodies are both ciphertext under the same DEK as the vault, and attached images
+are encrypted files in the app's private storage. This is stricter than the password side, where
+an entry's title and username are deliberately left readable for list and search UX — a note's
+title usually gives away as much as its contents, so neither is stored in the clear.
+
+Two consequences worth knowing:
+
+- **Search decrypts in memory.** Encrypted content cannot be matched with SQL `LIKE`, so every
+  note is decrypted and filtered in memory, debounced while you type. That is a few milliseconds
+  at personal scale; it would need rethinking for tens of thousands of notes.
+- **Tag names are stored in the clear.** They have to be compared for uniqueness and drawn as
+  filter chips before any note is opened. The label `taxes` leaks far less than the note behind
+  it, but it does leak — so name tags accordingly.
+
+Copying the database off the device reveals how many notes exist, when they changed, and what the
+tags are called. Nothing else.
+
+### Upgrading an existing install
+
+The notes feature moves the database from schema v1 to v2. The migration is **purely additive** —
+it creates the new tables and touches nothing that already exists, so an installed vault keeps
+every password through the upgrade. Verified by building a vault on the pre-notes APK, installing
+the new one over it, and confirming the old entry still decrypted afterwards.
+
+If you ever add another schema change, write a real `Migration`. Room's `fallbackToDestructiveMigration()`
+drops and recreates the database, which here means silently deleting the user's entire vault on
+first launch after an update.
+
 ## Bulk import from CSV
 
 **Settings → Import from CSV** adds many entries at once. **Get template CSV** shares a filled-in
@@ -370,6 +418,14 @@ $ANDROID_HOME/build-tools/36.0.0/apksigner verify --print-certs app-release.apk
 ```
 
 ### Installing it by download
+
+> **The package is `com.danovai.passvault`.** If you have an older build installed under the
+> previous `com.sandeepraghav.passvault` id, Android treats it as a completely different app: the
+> new one installs alongside it rather than updating it, and **the old vault is not carried over**.
+> Its data lives in the old app's private storage, and the Keystore material behind biometric
+> unlock and SMS recovery is scoped to the old app's UID, so even copying the files across would
+> not unlock them. Export anything you need from the old app first, then uninstall it.
+
 
 The APK isn't from the Play Store, so Android asks for permission the first time:
 

@@ -1,5 +1,5 @@
 # Room entities are accessed via generated code; keep field names stable across obfuscation.
--keep class com.sandeepraghav.passvault.data.** { *; }
+-keep class com.danovai.passvault.data.** { *; }
 
 # JavaMail resolves its transport/store providers by class name from
 # META-INF/javamail.default.providers, so those names must survive R8.

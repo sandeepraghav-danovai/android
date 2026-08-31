@@ -14,7 +14,7 @@
 set -euo pipefail
 
 AVD_NAME="Samsung_Galaxy_S25_API_35"
-APP_ID="com.sandeepraghav.passvault"
+APP_ID="com.danovai.passvault"
 ACTIVITY=".MainActivity"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
