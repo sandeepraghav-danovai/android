@@ -142,7 +142,7 @@ fun EntryDetailScreen(entryId: Long, onBack: () -> Unit, onEdit: (Long, Long) ->
     if (pendingAction != null) {
         val action = pendingAction!!
         ReAuthDialog(
-            reason = if (action == PendingAction.REVEAL) "Confirm your master password to view this password." else "Confirm your master password to copy it.",
+            reason = if (action == PendingAction.REVEAL) "Confirm it's you to view this password." else "Confirm it's you to copy this password.",
             onDismiss = { pendingAction = null },
             onVerified = {
                 pendingAction = null

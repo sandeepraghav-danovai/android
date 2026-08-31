@@ -23,6 +23,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.sandeepraghav.passvault.VaultApplication
 import com.sandeepraghav.passvault.ui.components.BiometricAuth
+import com.sandeepraghav.passvault.ui.components.LocalFragmentActivity
+import com.sandeepraghav.passvault.ui.components.findFragmentActivity
 import com.sandeepraghav.passvault.ui.components.DanovAiByline
 import com.sandeepraghav.passvault.ui.components.LockGlyph
 import com.sandeepraghav.passvault.ui.components.PasswordOutlinedField
@@ -90,7 +92,7 @@ fun LockScreen(onUnlocked: () -> Unit, onForgotPassword: () -> Unit, onUseRecove
     val recoveryKitAvailable = app.repository.isRecoveryKitEnabled()
 
     val context = androidx.compose.ui.platform.LocalContext.current
-    val activity = context as? androidx.fragment.app.FragmentActivity
+    val activity = LocalFragmentActivity.current ?: context.findFragmentActivity()
     val biometricAvailable = app.repository.isBiometricEnabled() &&
         activity != null && BiometricAuth.isReady(context)
 

@@ -21,6 +21,9 @@ interface CategoryDao {
     @Delete
     suspend fun delete(category: CategoryEntity)
 
+    @Query("SELECT * FROM categories ORDER BY sortOrder ASC")
+    suspend fun getAll(): List<CategoryEntity>
+
     @Query("SELECT COUNT(*) FROM categories")
     suspend fun count(): Int
 }

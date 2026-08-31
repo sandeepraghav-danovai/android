@@ -55,8 +55,21 @@ stays valid).
 
 **Hardening**: `FLAG_SECURE` blocks screenshots/recording/recents-thumbnail app-wide · vault locks
 the instant the app backgrounds (`MainActivity.onStop`) · viewing or copying a password requires
-re-entering the master password (`ReAuthDialog`) · clipboard auto-clears ~25s after a copy ·
-`allowBackup="false"` so Android never silently clouds your data.
+re-authenticating — biometrics or the master password (`ReAuthDialog`) · clipboard auto-clears
+~25s after a copy · `allowBackup="false"` so Android never silently clouds your data.
+
+**Biometric unlock** (optional, Settings): while the vault is unlocked, the DEK is sealed with a
+hardware-backed Keystore key carrying `setUserAuthenticationRequired(true)`, and the wrapped blob
+is stored in the vault header. Biometrics therefore never *derive* the key — they gate a key that
+already exists, and the master password remains a first-class way in. The key is created with
+`setInvalidatedByBiometricEnrollment(true)`, so enrolling a new fingerprint destroys it on
+purpose: someone who can add their own biometric to the device must not inherit the vault. Device
+credential (PIN/pattern) is deliberately not accepted as a fallback, since that would let anyone
+who can unlock the phone open the vault.
+
+The same key backs the per-entry gate in front of Show/Copy. That check is cryptographic rather
+than a trusted callback: the DEK it unwraps must match the one already in the session, so a blob
+from another vault cannot satisfy it (`VaultRepository.verifyBiometric`).
 
 ## Project structure
 
@@ -271,25 +284,120 @@ The white background of the master file is lifted into real alpha (un-premultipl
 antialiased edges), so the artwork sits cleanly on any surface with no white fringing — which is
 what makes the single lockup usable on both the light and dark app themes.
 
-## Building a signed release APK (optional, for a permanent install)
+## Bulk import from CSV
 
-A debug build works fine long-term for personal use, but if you want a release build:
+**Settings → Import from CSV** adds many entries at once. **Get template CSV** shares a filled-in
+example via the share sheet; **Choose CSV file** picks a file and imports it.
 
-```bash
-keytool -genkeypair -v -keystore passvault-release.keystore -alias passvault -keyalg RSA -keysize 2048 -validity 10000
+The header row defines the columns, so order doesn't matter and names are matched
+case-insensitively — usually an export from another manager just needs its header renamed:
+
+| Column | Required | Notes |
+|---|---|---|
+| `title` | yes | Entry name |
+| `password` | yes | Stored encrypted, exactly like a typed entry |
+| `category` | no | Created if it doesn't exist; blank rows go to `Imported` |
+| `username` | no | |
+| `url` | no | |
+| `notes` | no | Stored encrypted |
+
+Standard RFC 4180 quoting is supported, which matters more than it sounds — a field wrapped in
+quotes may contain commas, newlines, and doubled `""` for a literal quote:
+
+```csv
+category,title,username,password,url,notes
+Banks,Example Bank,you@example.com,S0me-Long-Passphrase,https://bank.example.com,Joint account
+Office,"VPN, corporate",staff-id,"pa""ss,word",,"Line one
+Line two"
 ```
 
-Then in Android Studio: **Build → Generate Signed Bundle / APK → APK**, point it at that keystore,
-and install the resulting APK the same way (`adb install app-release.apk` or drag it onto the
-device in Android Studio's Device Explorer / Files app).
+That third row imports a title containing a comma, the password `pa"ss,word`, and a two-line note.
 
-**Build status**: verified end to end on this machine, not just written and hoped for — the S25
-AVD boots, `./gradlew :app:installDebug` succeeds, and `MainActivity` reaches the resumed state on
-the emulator with no crashes. `app/build/outputs/apk/debug/app-debug.apk` exists.
+Rows are independent: a bad row is reported and skipped while everything else still imports, since
+a 200-row file failing wholesale over one bad line helps nobody. The summary reports what landed,
+what was skipped as an existing entry (matched on category + title + username, so re-importing the
+same file doesn't duplicate), which categories were created, and the line number of each rejected
+row.
 
-**Verified on the emulator**: `wm size` reports `1080x2340`, `wm density` reports `420`,
-`ro.product.cpu.abi` is `arm64-v8a`, `ro.build.version.sdk` is `35` — i.e. the simulated panel and
-platform match a real Galaxy S25.
+> **A CSV holds your passwords in the clear.** Delete the file once the import is done, and mind
+> where it lives in the meantime — the app can't clean up a file it only got read access to.
+
+One deliberate exception to the security model lives here. The vault normally locks the instant the
+app goes to the background, but the system file picker *is* a trip to the background, so the import
+could never run on return. `SessionManager.expectDeliberateBackground()` is a single-use flag, set
+only when opening that picker, that holds the session across the round trip — and it falls back to
+the normal auto-lock timeout rather than holding it open forever, so walking away from an open
+picker still locks the vault.
+
+## Building a signed release APK (for sideloading)
+
+The release build is minified and resource-shrunk by R8 and signed with a real release key, so
+it installs and updates like a normal app rather than a debug build.
+
+**Signing.** Credentials live in `keystore.properties` at the project root, which is gitignored
+along with `keystore/` and any `*.jks`:
+
+```properties
+storeFile=keystore/passvault-release.jks
+storePassword=...
+keyAlias=passvault
+keyPassword=...
+```
+
+`app/build.gradle.kts` reads that file if present; if it's missing the release build still
+assembles, just unsigned, so a fresh clone builds without needing the secrets. To create a key:
+
+```bash
+keytool -genkeypair -v -keystore keystore/passvault-release.jks -alias passvault \
+  -keyalg RSA -keysize 4096 -validity 10000
+```
+
+**Back up the keystore and its password.** Android requires the *same* signing key for every
+update — lose it and you can only ship a new version by uninstalling the old app first, which
+deletes the vault.
+
+**Build:**
+
+```bash
+./gradlew :app:assembleRelease
+# -> app/build/outputs/apk/release/app-release.apk
+```
+
+Confirm it's really signed before distributing:
+
+```bash
+$ANDROID_HOME/build-tools/36.0.0/apksigner verify --print-certs app-release.apk
+```
+
+### Installing it by download
+
+The APK isn't from the Play Store, so Android asks for permission the first time:
+
+1. Put the APK somewhere the phone can reach it (Drive, email to yourself, a USB cable).
+2. Open it from Files or the browser's download list.
+3. Android will offer to let that app install unknown apps — allow it, then confirm the install.
+   (Settings → Apps → Special app access → Install unknown apps, if you want to set it first.)
+
+Or over adb, with the phone plugged in:
+
+```bash
+adb install app-release.apk
+```
+
+Installing over an existing copy keeps the vault, as long as both builds are signed with the same
+key. A debug build and a release build are *not* the same key — swapping between them requires an
+uninstall, which erases the vault.
+
+### Release-build gotchas worth keeping in mind
+
+R8 rewrites and strips code, so things that work in debug can break only in release. What's
+already handled in `proguard-rules.pro`: Room entities keep their field names, JavaMail's
+providers are resolved by name from `META-INF`, and the argon2kt JNI bridge is kept. Verified on
+device against the release APK: Argon2id derivation, the Room schema, unlock, biometric unlock,
+and vault reset all work.
+
+The blunt lesson is that `assembleRelease` succeeding proves nothing — install the release APK and
+actually exercise the crypto paths before shipping one.
 
 ## Known limitations, stated plainly
 

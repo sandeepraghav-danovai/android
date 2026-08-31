@@ -4,6 +4,7 @@ import android.content.Context
 import com.sandeepraghav.passvault.crypto.Argon2Params
 import com.sandeepraghav.passvault.crypto.CryptoManager
 import com.sandeepraghav.passvault.data.CategoryEntity
+import com.sandeepraghav.passvault.data.CsvTemplate
 import com.sandeepraghav.passvault.data.DEFAULT_CATEGORIES
 import com.sandeepraghav.passvault.data.PasswordEntryEntity
 import com.sandeepraghav.passvault.data.VaultDatabase
@@ -299,6 +300,142 @@ class VaultRepository(private val context: Context, val session: SessionManager)
         } catch (e: Exception) {
             false
         }
+    }
+
+    /** True when a per-entry reveal/copy can be re-authorised with biometrics instead of typing. */
+    fun isBiometricReAuthAvailable(): Boolean = isBiometricEnabled() && session.currentKey() != null
+
+    /**
+     * Re-authorises revealing or copying a single password.
+     *
+     * The vault is already unlocked at this point, so this is not about obtaining the DEK — it
+     * re-proves that the enrolled human is still the one holding the phone. It does so
+     * cryptographically rather than trusting a boolean callback: the Keystore key only operates
+     * after a successful prompt, and the DEK it unwraps has to match the one already in the
+     * session, so a blob from some other vault cannot satisfy the gate.
+     */
+    fun verifyBiometric(cipher: javax.crypto.Cipher): Boolean {
+        val sessionKey = session.currentKey() ?: return false
+        val wrapped = VaultHeader.load(context).biometricWrappedDek ?: return false
+        return try {
+            val blob = com.sandeepraghav.passvault.crypto.EncryptedBlob.fromStorageString(wrapped)
+            val unwrapped = cipher.doFinal(blob.ciphertext)
+            // constant-time compare; these are both key material
+            val ok = java.security.MessageDigest.isEqual(unwrapped, sessionKey)
+            CryptoManager.wipe(unwrapped)
+            ok
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    // ---------------------------------------------------------------- bulk CSV import
+
+    /**
+     * Outcome of an import. Rows are independent: a malformed row is reported and skipped, and
+     * everything else still lands, because a 200-row file failing wholesale over one bad line is
+     * far more annoying than a partial import with a list of what to fix.
+     */
+    data class CsvImportResult(
+        val imported: Int = 0,
+        val skippedDuplicates: Int = 0,
+        val categoriesCreated: List<String> = emptyList(),
+        val errors: List<String> = emptyList(),
+        val fatalError: String? = null
+    )
+
+    /**
+     * Imports entries from a CSV in the [CsvTemplate] shape. Requires an unlocked vault: each
+     * password is encrypted with the session DEK as it is inserted, exactly like a hand-typed
+     * entry, so nothing is ever stored in the clear.
+     *
+     * Duplicates are judged on (category, title, username) — re-importing the same file will not
+     * double up. Missing categories are created as you go.
+     */
+    suspend fun importEntriesFromCsv(csvText: String): CsvImportResult {
+        session.currentKey() ?: return CsvImportResult(fatalError = "The vault is locked.")
+
+        val rows = com.sandeepraghav.passvault.util.CsvParser.parse(csvText)
+        if (rows.isEmpty()) return CsvImportResult(fatalError = "That file is empty.")
+
+        val header = rows.first().map { it.trim().lowercase() }
+        fun col(name: String) = header.indexOf(name)
+
+        val titleIdx = col(CsvTemplate.TITLE)
+        val passwordIdx = col(CsvTemplate.PASSWORD)
+        if (titleIdx < 0 || passwordIdx < 0) {
+            return CsvImportResult(
+                fatalError = "The header row needs at least '${CsvTemplate.TITLE}' and " +
+                    "'${CsvTemplate.PASSWORD}' columns. Found: ${header.joinToString(", ")}"
+            )
+        }
+        val categoryIdx = col(CsvTemplate.CATEGORY)
+        val usernameIdx = col(CsvTemplate.USERNAME)
+        val urlIdx = col(CsvTemplate.URL)
+        val notesIdx = col(CsvTemplate.NOTES)
+
+        // name -> id, matched case-insensitively so "banks" lands in the existing "Banks"
+        val categories = categoryDao.getAll().associateTo(mutableMapOf()) { it.name.lowercase() to it.id }
+        val existing = entryDao.getAll()
+            .mapTo(mutableSetOf()) { "${it.categoryId}|${it.title.lowercase()}|${it.username.lowercase()}" }
+
+        var imported = 0
+        var duplicates = 0
+        val created = mutableListOf<String>()
+        val errors = mutableListOf<String>()
+
+        rows.drop(1).forEachIndexed { index, row ->
+            val lineNumber = index + 2   // header is line 1
+            fun field(i: Int): String = if (i >= 0 && i < row.size) row[i].trim() else ""
+
+            val title = field(titleIdx)
+            val password = field(passwordIdx)
+            when {
+                title.isEmpty() && password.isEmpty() -> return@forEachIndexed   // blank filler row
+                title.isEmpty() -> { errors.add("Line $lineNumber: missing title"); return@forEachIndexed }
+                password.isEmpty() -> { errors.add("Line $lineNumber: missing password for \"$title\""); return@forEachIndexed }
+            }
+
+            val categoryName = field(categoryIdx).ifEmpty { CsvTemplate.DEFAULT_CATEGORY }
+            val categoryId = categories[categoryName.lowercase()] ?: run {
+                val newId = categoryDao.insert(
+                    CategoryEntity(
+                        name = categoryName,
+                        icon = "folder",
+                        colorHex = "#546E7A",
+                        sortOrder = categoryDao.count(),
+                        isBuiltIn = false
+                    )
+                )
+                categories[categoryName.lowercase()] = newId
+                created.add(categoryName)
+                newId
+            }
+
+            val username = field(usernameIdx)
+            val key = "$categoryId|${title.lowercase()}|${username.lowercase()}"
+            if (!existing.add(key)) {
+                duplicates++
+                return@forEachIndexed
+            }
+
+            addEntry(
+                categoryId = categoryId,
+                title = title,
+                username = username,
+                password = password,
+                notes = field(notesIdx).ifEmpty { null },
+                url = field(urlIdx).ifEmpty { null }
+            )
+            imported++
+        }
+
+        return CsvImportResult(
+            imported = imported,
+            skippedDuplicates = duplicates,
+            categoriesCreated = created,
+            errors = errors
+        )
     }
 
     // ---------------------------------------------------------------- destructive reset

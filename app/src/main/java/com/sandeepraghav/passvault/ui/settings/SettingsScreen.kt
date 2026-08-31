@@ -39,11 +39,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.Alignment
 import com.sandeepraghav.passvault.ui.components.BiometricAuth
+import com.sandeepraghav.passvault.ui.components.LocalFragmentActivity
+import com.sandeepraghav.passvault.ui.components.findFragmentActivity
 import androidx.compose.ui.res.stringResource
 import androidx.core.content.FileProvider
+import kotlinx.coroutines.withContext
 import com.sandeepraghav.passvault.R
 import com.sandeepraghav.passvault.ui.components.DanovAiLockup
 import androidx.lifecycle.ViewModel
@@ -63,6 +67,8 @@ class SettingsViewModel(private val app: VaultApplication) : ViewModel() {
         val recoveryKitEnabled: Boolean = false,
         val biometricEnabled: Boolean = false,
         val resetConfirmText: String = "",
+        val importResult: com.sandeepraghav.passvault.repository.VaultRepository.CsvImportResult? = null,
+        val importing: Boolean = false,
         val showResetDialog: Boolean = false,
         val newPassword: String = "",
         val confirmPassword: String = "",
@@ -146,6 +152,55 @@ class SettingsViewModel(private val app: VaultApplication) : ViewModel() {
 
     fun showMessage(message: String) = update { it.copy(message = message) }
 
+    // ------------------------------------------------------------ bulk CSV import
+
+    fun importCsv(context: android.content.Context, uri: android.net.Uri) {
+        update { it.copy(importing = true, message = null) }
+        viewModelScope.launch {
+            val result = runCatching {
+                val text = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.use { stream ->
+                        // guard against being handed something enormous by the picker
+                        val bytes = stream.readBytes()
+                        if (bytes.size > MAX_IMPORT_BYTES) null else String(bytes, Charsets.UTF_8)
+                    }
+                }
+                when (text) {
+                    null -> com.sandeepraghav.passvault.repository.VaultRepository.CsvImportResult(
+                        fatalError = "Couldn't read that file, or it is larger than ${MAX_IMPORT_BYTES / (1024 * 1024)} MB."
+                    )
+                    else -> app.repository.importEntriesFromCsv(text)
+                }
+            }.getOrElse { error ->
+                com.sandeepraghav.passvault.repository.VaultRepository.CsvImportResult(fatalError = "Import failed: ${error.message}")
+            }
+            update { it.copy(importing = false, importResult = result) }
+        }
+    }
+
+    /** The picker backgrounds us; keep the session so the import can actually run on return. */
+    fun aboutToOpenFilePicker() = app.sessionManager.expectDeliberateBackground()
+
+    fun dismissImportResult() = update { it.copy(importResult = null) }
+
+    /** Writes the template to cache and hands it to the share sheet. */
+    fun shareImportTemplate(context: android.content.Context) {
+        runCatching {
+            val dir = java.io.File(context.cacheDir, "shared").apply { mkdirs() }
+            val file = java.io.File(dir, com.sandeepraghav.passvault.data.CsvTemplate.FILE_NAME)
+            file.writeText(com.sandeepraghav.passvault.data.CsvTemplate.sample())
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/csv"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(intent, "Save import template"))
+        }.onFailure { error ->
+            update { it.copy(message = "Couldn't create the template: ${error.message}") }
+        }
+    }
+
     // ------------------------------------------------------------ destructive reset
 
     fun openResetDialog() = update { it.copy(showResetDialog = true, resetConfirmText = "") }
@@ -169,6 +224,7 @@ class SettingsViewModel(private val app: VaultApplication) : ViewModel() {
 
     companion object {
         const val RESET_CONFIRM_PHRASE = "DELETE"
+        const val MAX_IMPORT_BYTES = 5 * 1024 * 1024
     }
 
     fun exportBackup(context: android.content.Context) {
@@ -190,6 +246,9 @@ fun SettingsScreen(
     val viewModel = vaultViewModel { SettingsViewModel(it) }
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
+    val csvPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) viewModel.importCsv(context, uri)
+    }
     val smsPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) viewModel.enableRecovery() else viewModel.update { it.copy(message = "SMS permission is required to send the recovery code.") }
     }
@@ -359,7 +418,7 @@ fun SettingsScreen(
             Spacer(Modifier.height(24.dp))
 
             // ---------------------------------------------------------------- biometric unlock
-            val activity = context as? androidx.fragment.app.FragmentActivity
+            val activity = LocalFragmentActivity.current ?: context.findFragmentActivity()
             val biometricStatus = BiometricAuth.availability(context)
 
             Text("Biometric unlock", style = MaterialTheme.typography.titleMedium)
@@ -422,6 +481,101 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text("Lock now")
+            }
+
+            // ---------------------------------------------------------------- bulk import
+            Spacer(Modifier.height(24.dp))
+            Divider()
+            Spacer(Modifier.height(24.dp))
+
+            Text("Import from CSV", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Bulk-add entries from a spreadsheet. Columns: " +
+                    com.sandeepraghav.passvault.data.CsvTemplate.COLUMNS.joinToString(", ") +
+                    ". Order doesn't matter and headers are case-insensitive; only title and " +
+                    "password are required. Missing categories are created, and rows that already " +
+                    "exist (same category, title and username) are skipped.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "A CSV holds your passwords in the clear. Delete the file once the import is done, " +
+                    "and be careful where you store it in the meantime.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = { viewModel.shareImportTemplate(context) },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Get template CSV")
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = { viewModel.aboutToOpenFilePicker(); csvPickerLauncher.launch(arrayOf("text/csv", "text/comma-separated-values", "text/plain", "*/*")) },
+                enabled = !state.importing,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (state.importing) {
+                    CircularProgressIndicator(modifier = Modifier.height(18.dp))
+                    Spacer(Modifier.height(0.dp))
+                    Text("  Importing…")
+                } else {
+                    Text("Choose CSV file")
+                }
+            }
+
+            state.importResult?.let { result ->
+                AlertDialog(
+                    onDismissRequest = viewModel::dismissImportResult,
+                    title = { Text(if (result.fatalError != null) "Import failed" else "Import finished") },
+                    text = {
+                        Column {
+                            if (result.fatalError != null) {
+                                Text(result.fatalError!!, style = MaterialTheme.typography.bodySmall)
+                            } else {
+                                Text("Added ${result.imported} " + if (result.imported == 1) "entry." else "entries.")
+                                if (result.skippedDuplicates > 0) {
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        "Skipped ${result.skippedDuplicates} already in the vault.",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                                if (result.categoriesCreated.isNotEmpty()) {
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        "New categories: ${result.categoriesCreated.distinct().joinToString(", ")}",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                                if (result.errors.isNotEmpty()) {
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(
+                                        "${result.errors.size} row(s) skipped:",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                    // cap the list so one bad file cannot produce an endless dialog
+                                    result.errors.take(8).forEach {
+                                        Text(it, style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    if (result.errors.size > 8) {
+                                        Text(
+                                            "…and ${result.errors.size - 8} more.",
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = viewModel::dismissImportResult) { Text("Done") }
+                    }
+                )
             }
 
             // ---------------------------------------------------------------- danger zone

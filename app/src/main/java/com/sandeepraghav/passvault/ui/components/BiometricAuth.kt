@@ -1,9 +1,11 @@
 package com.sandeepraghav.passvault.ui.components
 
 import android.content.Context
+import android.content.ContextWrapper
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.fragment.app.FragmentActivity
 import javax.crypto.Cipher
 
@@ -14,6 +16,36 @@ import javax.crypto.Cipher
  * deliberately not offered as a fallback: the master password already fills that role, and
  * accepting the device PIN would let anyone who can unlock the phone open the vault.
  */
+/**
+ * The hosting activity, supplied by MainActivity itself.
+ *
+ * BiometricPrompt needs a FragmentActivity. Resolving it by casting `LocalContext.current`
+ * works but fails silently when it doesn't — the switch simply greys out with no error, which
+ * is a miserable thing to debug. Passing the activity down with its compile-time type means a
+ * mismatch becomes a build error instead of a mystery at runtime.
+ */
+val LocalFragmentActivity = staticCompositionLocalOf<FragmentActivity?> { null }
+
+/**
+ * Fallback for contexts that did not come through [LocalFragmentActivity]. Walks the
+ * ContextWrapper chain to find the hosting activity.
+ *
+ * `LocalContext.current` is not guaranteed to be the Activity itself — it is frequently a
+ * ContextThemeWrapper around it, and a plain `as?` cast then silently yields null. That failure
+ * is invisible in a debug build and shows up as a permanently greyed-out biometric switch, so
+ * unwrap properly rather than casting.
+ */
+fun Context.findFragmentActivity(): FragmentActivity? {
+    var current: Context = this
+    while (true) {
+        when (current) {
+            is FragmentActivity -> return current
+            is ContextWrapper -> current = current.baseContext
+            else -> return null
+        }
+    }
+}
+
 object BiometricAuth {
 
     private const val AUTHENTICATORS = BiometricManager.Authenticators.BIOMETRIC_STRONG

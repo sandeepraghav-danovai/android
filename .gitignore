@@ -41,3 +41,10 @@ app/release/
 .gradle/
 gradle/wrapper/dists/
 build/
+
+# Release signing material — must never be committed.
+# Losing these means you cannot ship an update over an installed copy of the app.
+keystore.properties
+keystore/
+*.jks
+*.keystore
